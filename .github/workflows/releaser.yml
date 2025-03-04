@@ -15,4 +15,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo run -- pr --repo-url tmayoff/releaser
+      run: cargo run -- pr --repo-url tmayoff/releaser --token ${{ secrets.RELEASER_TOKEN }}
