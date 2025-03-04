@@ -1,4 +1,6 @@
-use std::{any::Any, collections::HashMap};
+pub mod fs;
+
+use std::collections::HashMap;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -63,16 +65,22 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
 
     let pulls = octocrab.pulls(&owner, &repo).list().send().await?;
 
-    let last_release_pr =  pulls.items.iter().find(|p| match &p.title {
-        Some(title) => title.starts_with("chore(main): release") ,
-        None => false,
-    } && match &p.body_text {
-        Some(body) => body.contains("created by releaser"),
-        None => false,
-    }&& &p.state.as_ref().expect("PR should have a state") == &&IssueState::Closed).cloned();
+    let last_release_pr = pulls
+        .items
+        .iter()
+        .find(|p| match &p.title {
+            Some(title) => title.starts_with("chore(main): release"),
+            None => false,
+
+    // TODO ensure the release PR is made by us
+    // } && match &p.body_text {
+    //     Some(body) => body.contains("created by releaser"),
+    //     None => false,
+
+    }&& &p.state.as_ref().expect("PR should have a state") != &&IssueState::Closed).cloned();
 
     match last_release_pr {
-        Some(_) => {
+        Some(pr) => {
             info!("Found existing release PR");
             update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md").await?;
         }
@@ -113,6 +121,8 @@ async fn update_or_create_file(
     // View if file exists
 
     let req = octocrab.repos(owner, repo);
+
+    let content = fs::get_file_content(octocrab, owner, repo, "releaser-main-release", path).await?;
 
     let content = req
         .get_content()
@@ -235,10 +245,10 @@ enum ConventionalCommitType {
 
 #[derive(Clone, Debug)]
 struct ConventionalCommit {
-    breaking: bool,
-    commit: RepoCommit,
+    _breaking: bool,
+    _commit: RepoCommit,
     title: String,
-    scope: String,
+    _scope: String,
     _type: ConventionalCommitType,
 }
 
@@ -266,10 +276,10 @@ fn parse_commit(commit: &RepoCommit) -> Option<ConventionalCommit> {
     }
 
     Some(ConventionalCommit {
-        breaking: false,
-        commit: commit.clone(),
+        _breaking: false,
+        _commit: commit.clone(),
         title: commit_line.to_string(),
-        scope: "".to_string(),
+        _scope: "".to_string(),
         _type: commit_type,
     })
 }
