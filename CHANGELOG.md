@@ -1,6 +1,6 @@
-## Features
+### Features
 - feat: added PR creation and updates
 - feat: Add initial filess
 
-## Bug fixes
+### Bug fixes
 - fix: releaser token
