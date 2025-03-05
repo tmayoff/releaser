@@ -2,8 +2,6 @@ name: Releaser
 
 on:
   push:
-    branches:
-      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,5 +12,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Build
-      run: cargo run -- pr --repo-url tmayoff/releaser --token ${{ secrets.RELEASER_TOKEN }}
+      run: cargo build
+
+    - name: Test
+      run: cargo test

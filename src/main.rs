@@ -86,15 +86,10 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
             let changelog = conventional_commits_to_string(&commits);
             update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
 
-            let pr_body = format!(
-                "# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser",
-                changelog
-            );
-
             octocrab
                 .pulls(&owner, &repo)
                 .update(pr.number)
-                .body(&pr_body)
+                .body(&pr::format_body(&changelog))
                 .send()
                 .await?;
         }
@@ -115,16 +110,11 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
 
             update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
 
-            let pr_body = format!(
-                "# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser",
-                changelog
-            );
-
             Some(
                 octocrab
                     .pulls(&owner, &repo)
                     .create("chore(main): release", "releaser-main-release", "main")
-                    .body(&pr_body)
+                    .body(&pr::format_body(&changelog))
                     .send()
                     .await?,
             );

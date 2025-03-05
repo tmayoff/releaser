@@ -42,3 +42,18 @@ pub async fn update_or_create(
 
     Ok(())
 }
+
+pub fn format_body(content: &str) -> String {
+    format!(
+        r#"
+# 🤖 I have created a release beep boop
+
+{}
+
+---
+
+Release created by [releaser](https://github.com/tmayoff/releaser)
+"#,
+        content
+    )
+}
