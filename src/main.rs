@@ -1,4 +1,5 @@
 pub mod fs;
+pub mod pr;
 
 use std::collections::HashMap;
 
@@ -40,7 +41,6 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    println!("{:?}", args);
 
     match args.command {
         Command::Check { repo_url } => {
@@ -86,7 +86,10 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
             let changelog = conventional_commits_to_string(&commits);
             update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
 
-            let pr_body = format!("# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser", changelog);
+            let pr_body = format!(
+                "# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser",
+                changelog
+            );
 
             octocrab
                 .pulls(&owner, &repo)
@@ -112,7 +115,10 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
 
             update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
 
-            let pr_body = format!("# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser", changelog);
+            let pr_body = format!(
+                "# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser",
+                changelog
+            );
 
             Some(
                 octocrab
@@ -135,8 +141,6 @@ async fn update_or_create_file(
     path: &str,
     content: &str,
 ) -> Result<()> {
-    // View if file exists
-
     let req = octocrab.repos(owner, repo);
 
     let current_content =
@@ -298,11 +302,16 @@ fn parse_commit(commit: &RepoCommit) -> Option<ConventionalCommit> {
         .first()
         .expect("Commit requires a message");
 
+    let title;
     let commit_type: ConventionalCommitType;
     match commit_line.find(':') {
         Some(index) => {
             let keyword = commit_line.get(..index).expect("requires a keyword");
-
+            title = commit_line
+                .get((index + 1)..)
+                .expect("requires content")
+                .trim()
+                .to_string();
             match keyword {
                 "fix" => commit_type = ConventionalCommitType::Fix,
                 "feat" | "feature" => commit_type = ConventionalCommitType::Feature,
@@ -315,7 +324,7 @@ fn parse_commit(commit: &RepoCommit) -> Option<ConventionalCommit> {
     Some(ConventionalCommit {
         _breaking: false,
         _commit: commit.clone(),
-        title: commit_line.to_string(),
+        title,
         _scope: "".to_string(),
         _type: commit_type,
     })
