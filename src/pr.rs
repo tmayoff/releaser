@@ -1,22 +1,17 @@
 use anyhow::Result;
-use octocrab::models::IssueState;
+use octocrab::models::pulls::PullRequest;
+
+pub const PR_TITLE_PREFIX: &str = "chore(main): release";
 
 pub async fn update_or_create(
     octocrab: &octocrab::Octocrab,
     owner: &str,
     repo: &str,
+    head: &str,
     title_prefix: &str,
     body: &str,
 ) -> Result<()> {
-    let pulls = octocrab.pulls(owner, repo).list().send().await?;
-
-    let existing_pull= pulls
-        .items
-        .iter()
-        .find(|p| match &p.title {
-            Some(title) => title.starts_with(title_prefix),
-            None => false,
-   }&& &p.state.as_ref().expect("PR should have a state") != &&IssueState::Closed).cloned();
+    let existing_pull = find_pr(owner, repo, title_prefix).await?;
 
     match existing_pull {
         Some(pr) => {
@@ -28,7 +23,6 @@ pub async fn update_or_create(
                 .await?;
         }
         None => {
-            let head = "";
             let title = title_prefix;
 
             octocrab
@@ -41,6 +35,26 @@ pub async fn update_or_create(
     }
 
     Ok(())
+}
+
+pub async fn find_pr(owner: &str, repo: &str, title_prefix: &str) -> Result<Option<PullRequest>> {
+    let pulls = octocrab::instance()
+        .pulls(owner, repo)
+        .list()
+        .state(octocrab::params::State::Open)
+        .send()
+        .await?;
+
+    let existing_pull = pulls
+        .items
+        .iter()
+        .find(|p| match &p.title {
+            Some(title) => title.starts_with(title_prefix),
+            None => false,
+        })
+        .cloned();
+
+    Ok(existing_pull)
 }
 
 pub fn format_body(content: &str) -> String {
