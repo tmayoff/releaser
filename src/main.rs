@@ -58,7 +58,7 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
     info!("Checking repo: {}", repo_url);
     let (owner, repo) = get_owner_repo(repo_url);
 
-    let _commits = get_commits_since_last_release(&owner, &repo).await?;
+    let commits = get_commits_since_last_release(&owner, &repo).await?;
 
     let octocrab = octocrab::instance().user_access_token(token)?;
     let head = octocrab.commits(&owner, &repo).get("HEAD").await?.sha;
@@ -82,7 +82,18 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
     match last_release_pr {
         Some(pr) => {
             info!("Found existing release PR");
-            update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md").await?;
+
+            let changelog = conventional_commits_to_string(&commits);
+            update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
+
+            let pr_body = format!("# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser", changelog);
+
+            octocrab
+                .pulls(&owner, &repo)
+                .update(pr.number)
+                .body(&pr_body)
+                .send()
+                .await?;
         }
         None => {
             info!("Release PR not found, creating a new one");
@@ -97,12 +108,17 @@ async fn pr(repo_url: &str, token: &str) -> Result<()> {
                 )
                 .await;
 
-            update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md").await?;
+            let changelog = conventional_commits_to_string(&commits);
+
+            update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
+
+            let pr_body = format!("# 🤖 I have created a release beep boop\n\n{}\n\n---\nRelease created by releaser", changelog);
 
             Some(
                 octocrab
                     .pulls(&owner, &repo)
                     .create("chore(main): release", "releaser-main-release", "main")
+                    .body(&pr_body)
                     .send()
                     .await?,
             );
@@ -117,34 +133,28 @@ async fn update_or_create_file(
     owner: &str,
     repo: &str,
     path: &str,
+    content: &str,
 ) -> Result<()> {
     // View if file exists
 
     let req = octocrab.repos(owner, repo);
 
-    let content = fs::get_file_content(octocrab, owner, repo, "releaser-main-release", path).await?;
-
-    let content = req
-        .get_content()
-        .path(path)
-        .r#ref("releaser-main-release")
-        .send()
-        .await;
+    let current_content =
+        fs::get_file_content(octocrab, owner, repo, "releaser-main-release", path).await?;
 
     let update_req;
 
-    match content {
-        Ok(content) => {
-            let content = content
-                .items
-                .iter()
-                .next()
-                .expect("Expected the file to exist");
-
-            update_req = req.update_file(path, "update changelog.md", "", content.sha.to_string());
+    match current_content {
+        Some(current_content) => {
+            update_req = req.update_file(
+                path,
+                "update changelog.md",
+                content,
+                current_content.sha.to_string(),
+            );
         }
-        Err(_) => {
-            update_req = req.create_file(path, "Update changelog", "UPDATE CHANGELOG");
+        None => {
+            update_req = req.create_file(path, "Update changelog", content);
         }
     }
 
@@ -250,6 +260,33 @@ struct ConventionalCommit {
     title: String,
     _scope: String,
     _type: ConventionalCommitType,
+}
+
+fn conventional_commits_to_string(
+    commits: &HashMap<ConventionalCommitType, Vec<ConventionalCommit>>,
+) -> String {
+    let features = commits.get(&ConventionalCommitType::Feature);
+    let fixes = commits.get(&ConventionalCommitType::Fix);
+
+    // let mut breaking = Vec::new();
+    let mut string = String::new();
+
+    if let Some(feats) = features {
+        string += "### Features";
+        for f in feats {
+            string += &format!("\n- {}", f.title);
+        }
+        string += "\n";
+    }
+
+    if let Some(fixes) = fixes {
+        string += "\n### Bug fixes";
+        for f in fixes {
+            string += &format!("\n- {}", f.title);
+        }
+    }
+
+    string
 }
 
 fn parse_commit(commit: &RepoCommit) -> Option<ConventionalCommit> {
