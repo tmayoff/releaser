@@ -1,5 +1,6 @@
 ## Features
-feat: added PR creation and updates
-feat: Add initial filess
+- feat: added PR creation and updates
+- feat: Add initial filess
+
 ## Bug fixes
-fix: releaser token
+- fix: releaser token
