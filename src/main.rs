@@ -1,33 +1,31 @@
+pub mod config;
+pub mod context;
 pub mod fs;
 pub mod pr;
-pub mod config;
 
 use std::collections::HashMap;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use config::Config;
+use context::Context;
 use log::info;
 use octocrab::models::repos::{CommitAuthor, RepoCommit};
 use pr::find_pr;
 
 #[derive(Clone, Debug, Subcommand)]
 enum Command {
-    Check {
-        #[arg(long)]
-        repo_url: String,
-    },
-    PR {
-        #[arg(long)]
-        repo_url: String,
-        #[arg(long)]
-        token: String,
-    },
+    Check {},
+    PR {},
 }
 
 #[derive(Debug, Parser)]
 struct Args {
     #[arg(long)]
-    repo_url: Option<String>,
+    repo_url: String,
+
+    #[arg(long)]
+    token: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -41,50 +39,86 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    let repo_url = args.repo_url;
+
+    let (owner, repo) = get_owner_repo(&repo_url);
+    let config = get_config(&owner, &repo).await?;
+
+    let context = Context {
+        config,
+        owner,
+        repo,
+        token: args.token,
+    };
+
     match args.command {
-        Command::Check { repo_url } => {
-            check(&repo_url).await?;
+        Command::Check {} => {
+            check(&context).await?;
         }
-        Command::PR { repo_url, token } => {
-            pr(&repo_url, &token).await?;
+        Command::PR {} => {
+            pr(&context).await?;
         }
     }
 
     Ok(())
 }
 
-async fn pr(repo_url: &str, token: &str) -> Result<()> {
-    info!("Checking repo: {}", repo_url);
-    let (owner, repo) = get_owner_repo(repo_url);
+async fn get_config(owner: &str, repo: &str) -> Result<Config> {
+    let content = fs::get_file_content(
+        &octocrab::instance(),
+        owner,
+        repo,
+        "main",
+        "release-please-config.json",
+    )
+    .await?
+    .expect("Couldn't find config file");
 
-    let commits = get_commits_since_last_release(&owner, &repo).await?;
+    Ok(serde_json::from_str(
+        &content.content.expect("Config is empty"),
+    )?)
+}
 
-    let octocrab = octocrab::instance().user_access_token(token)?;
-    let head = octocrab.commits(&owner, &repo).get("HEAD").await?.sha;
+async fn pr(ctx: &Context) -> Result<()> {
+    info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
+
+    let token = ctx
+        .token
+        .as_ref()
+        .expect("PR command requires a Github token");
+
+    let commits = get_commits_since_last_release(&ctx.owner, &ctx.repo).await?;
+
+    let octocrab = octocrab::instance().user_access_token(token.as_str())?;
+    let head = octocrab
+        .commits(&ctx.owner, &ctx.repo)
+        .get("HEAD")
+        .await?
+        .sha;
 
     let branch_name = "releaser-main-release";
 
     let changelog = conventional_commits_to_string(&commits);
-    if let None = find_pr(&owner, &repo, pr::PR_TITLE_PREFIX).await? {
+    if let None = find_pr(&ctx.owner, &ctx.repo, pr::PR_TITLE_PREFIX).await? {
         info!("Existing release PR not found, creating now...");
 
         let _ = octocrab
-            .repos(&owner, &repo)
+            .repos(&ctx.owner, &ctx.repo)
             .create_ref(
                 &octocrab::params::repos::Reference::Branch(branch_name.to_string()),
                 &head,
             )
             .await;
 
-        update_or_create_file(&octocrab, &owner, &repo, "CHANGELOG.md", &changelog).await?;
+        update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog).await?;
     } else {
         info!("Existing release PR found");
     }
 
     pr::update_or_create(
         &octocrab,
-        &owner,
-        &repo,
+        &ctx.owner,
+        &ctx.repo,
         &head,
         pr::PR_TITLE_PREFIX,
         &pr::format_body(&changelog),
@@ -146,11 +180,10 @@ async fn update_or_create_file(
     Ok(())
 }
 
-async fn check(repo_url: &str) -> Result<()> {
-    info!("Checking repo: {}", repo_url);
-    let (owner, repo) = get_owner_repo(repo_url);
+async fn check(ctx: &Context) -> Result<()> {
+    info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
 
-    let grouped = get_commits_since_last_release(&owner, &repo).await?;
+    let grouped = get_commits_since_last_release(&ctx.owner, &ctx.repo).await?;
 
     info!("Commits since last release");
     for (_type, commits) in grouped {
