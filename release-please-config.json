@@ -1,5 +1,7 @@
 {
-  ".": {
-    "release-type": "cargo"
+  "packages": {
+    ".": {
+      "release-type": "cargo"
+    }
   }
 }
