@@ -4,6 +4,7 @@
 - Add initial filess
 
 ### Bug fixes
+- PR stopped updating changelog file
 - Config parsing from github (content is encoded)
 - malformed config file
 - Workflow command syntax
