@@ -5,10 +5,9 @@ pub mod pr;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use config::Config;
-use context::Context;
+use config::{Config, get_config};
 use log::info;
 use octocrab::models::repos::{CommitAuthor, RepoCommit};
 use pr::find_pr;
@@ -42,9 +41,11 @@ async fn main() -> Result<()> {
     let repo_url = args.repo_url;
 
     let (owner, repo) = get_owner_repo(&repo_url);
-    let config = get_config(&owner, &repo).await?;
+    let config = get_config(&owner, &repo)
+        .await
+        .context("Failed to parse config")?;
 
-    let context = Context {
+    let context = context::Context {
         config,
         owner,
         repo,
@@ -63,23 +64,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_config(owner: &str, repo: &str) -> Result<Config> {
-    let content = fs::get_file_content(
-        &octocrab::instance(),
-        owner,
-        repo,
-        "main",
-        "release-please-config.json",
-    )
-    .await?
-    .expect("Couldn't find config file");
-
-    Ok(serde_json::from_str(
-        &content.content.expect("Config is empty"),
-    )?)
-}
-
-async fn pr(ctx: &Context) -> Result<()> {
+async fn pr(ctx: &context::Context) -> Result<()> {
     info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
 
     let token = ctx
@@ -180,7 +165,7 @@ async fn update_or_create_file(
     Ok(())
 }
 
-async fn check(ctx: &Context) -> Result<()> {
+async fn check(ctx: &context::Context) -> Result<()> {
     info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
 
     let grouped = get_commits_since_last_release(&ctx.owner, &ctx.repo).await?;
