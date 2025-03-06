@@ -98,6 +98,7 @@ async fn pr(ctx: &context::Context) -> Result<()> {
         update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog).await?;
     } else {
         info!("Existing release PR found");
+        update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog).await?;
     }
 
     pr::update_or_create(
