@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use config::{Config, get_config};
+use config::get_config;
 use log::info;
 use octocrab::models::repos::{CommitAuthor, RepoCommit};
 use pr::find_pr;
