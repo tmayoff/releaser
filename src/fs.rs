@@ -1,12 +1,19 @@
+use crate::context::Context;
+
+pub struct Content {
+    pub text: String,
+    pub sha: Option<String>,
+}
+
 pub async fn get_file_content(
-    octocrab: &octocrab::Octocrab,
-    owner: &str,
-    repo: &str,
+    ctx: &Context,
     r#ref: &str,
     path: &str,
-) -> Result<Option<octocrab::models::repos::Content>, octocrab::Error> {
-    let content_list = octocrab
-        .repos(owner, repo)
+) -> Result<Option<Content>, octocrab::Error> {
+    let content_list = ctx
+        .octocrab
+        .clone()
+        .repos(&ctx.owner, &ctx.repo)
         .get_content()
         .path(path)
         .r#ref(r#ref)
@@ -30,13 +37,19 @@ pub async fn get_file_content(
                 .next()
                 .expect("Requires at least 1 ");
 
-            Ok(Some(content.to_owned()))
+            Ok(Some(Content {
+                text: content.decoded_content().unwrap(),
+                sha: Some(content.sha.clone()),
+            }))
         }
         Err(octocrab::Error::GitHub { source, backtrace }) => {
             if source.status_code == 404 {
                 Ok(None)
             } else {
-                Err(octocrab::Error::GitHub { source, backtrace })
+                Err(octocrab::Error::GitHub {
+                    source: source.clone(),
+                    backtrace,
+                })
             }
         }
         Err(e) => Err(e),

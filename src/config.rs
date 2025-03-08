@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::fs;
+use crate::{context, fs};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -17,26 +17,18 @@ pub struct Package {
     pub release_type: ReleaseType,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     pub packages: HashMap<String, Package>,
 }
 
-pub async fn get_config(owner: &str, repo: &str) -> Result<Config> {
-    let content = fs::get_file_content(
-        &octocrab::instance(),
-        owner,
-        repo,
-        "main",
-        "release-please-config.json",
-    )
-    .await?
-    .expect("Couldn't find config file")
-    .decoded_content()
-    .expect("Config file shouldn't be empty");
+pub async fn get_config(ctx: &context::Context) -> Result<Config> {
+    let content = fs::get_file_content(&ctx, "main", "release-please-config.json")
+        .await?
+        .expect("Couldn't find config file");
 
-    Ok(serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse config file: {}", content))?)
+    Ok(serde_json::from_str(&content.text)
+        .with_context(|| format!("Failed to parse config file: {}", content.text))?)
 }
 
 #[cfg(test)]

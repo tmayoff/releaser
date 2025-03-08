@@ -4,14 +4,14 @@ pub mod fs;
 pub mod package;
 pub mod pr;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use config::get_config;
+use config::{Config, get_config};
 use log::info;
 use octocrab::models::repos::{CommitAuthor, RepoCommit};
-use package::get_package_name;
+use package::get_package_info;
 use pr::find_pr;
 
 #[derive(Clone, Debug, Subcommand)]
@@ -43,16 +43,21 @@ async fn main() -> Result<()> {
     let repo_url = args.repo_url;
 
     let (owner, repo) = get_owner_repo(&repo_url);
-    let config = get_config(&owner, &repo)
-        .await
-        .context("Failed to parse config")?;
+    let octocrab = if let Some(token) = &args.token {
+        octocrab::instance().user_access_token(token.clone())?
+    } else {
+        octocrab::instance().deref().clone()
+    };
 
-    let context = context::Context {
-        config,
+    let mut context = context::Context {
+        config: Config::default(),
         owner,
         repo,
+        octocrab,
         token: args.token,
+        local: false,
     };
+    context.config = get_config(&context).await?;
 
     match args.command {
         Command::Check {} => {
@@ -75,9 +80,9 @@ async fn pr(ctx: &context::Context) -> Result<()> {
         .expect("PR command requires a Github token");
 
     for (pkg_dir, pkg) in &ctx.config.packages {
-        let package_name = get_package_name(ctx, pkg_dir, &pkg.release_type).await?;
+        let package_info = get_package_info(ctx, pkg_dir, &pkg.release_type).await?;
 
-        info!("Updating PR for '{}' package", package_name);
+        info!("Updating PR for '{}' package", package_info.name);
 
         let commits = get_commits_since_last_release(&ctx.owner, &ctx.repo, &pkg_dir).await?;
 
@@ -88,7 +93,7 @@ async fn pr(ctx: &context::Context) -> Result<()> {
             .await?
             .sha;
 
-        let branch_name = "releaser-main-release";
+        let branch_name = format!("release-{}", package_info.name);
 
         let changelog = conventional_commits_to_string(&commits);
         if let None = find_pr(&ctx.owner, &ctx.repo, pr::PR_TITLE_PREFIX).await? {
@@ -102,12 +107,10 @@ async fn pr(ctx: &context::Context) -> Result<()> {
                 )
                 .await;
 
-            update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog)
-                .await?;
+            update_or_create_file(ctx, "CHANGELOG.md", &changelog).await?;
         } else {
             info!("Existing release PR found");
-            update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog)
-                .await?;
+            update_or_create_file(ctx, "CHANGELOG.md", &changelog).await?;
         }
 
         pr::update_or_create(
@@ -124,33 +127,24 @@ async fn pr(ctx: &context::Context) -> Result<()> {
     Ok(())
 }
 
-async fn update_or_create_file(
-    octocrab: &octocrab::Octocrab,
-    owner: &str,
-    repo: &str,
-    path: &str,
-    content: &str,
-) -> Result<()> {
-    let req = octocrab.repos(owner, repo);
+async fn update_or_create_file(ctx: &context::Context, path: &str, content: &str) -> Result<()> {
+    let req = ctx.octocrab.repos(&ctx.owner, &ctx.repo);
 
-    let current_content =
-        fs::get_file_content(octocrab, owner, repo, "releaser-main-release", path).await?;
+    let current_content = fs::get_file_content(ctx, "releaser-main-release", path).await?;
 
     let update_req;
 
     match current_content {
         Some(current_content) => {
-            if let Some(c) = current_content.content {
-                if content == c {
-                    return Ok(());
-                }
+            if content == &current_content.text {
+                return Ok(());
             }
 
             update_req = req.update_file(
                 path,
                 "update changelog.md",
                 content,
-                current_content.sha.to_string(),
+                current_content.sha.unwrap_or_default().to_string(),
             );
         }
         None => {
@@ -180,9 +174,11 @@ async fn check(ctx: &context::Context) -> Result<()> {
     info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
 
     for (pkg_dir, pkg) in &ctx.config.packages {
+        let package_info = package::get_package_info(ctx, pkg_dir, &pkg.release_type).await?;
+
         info!(
-            "Checking package: {}",
-            package::get_package_name(ctx, pkg_dir, &pkg.release_type).await?
+            "Checking package: {}@{}",
+            package_info.name, package_info.version
         );
 
         let grouped = get_commits_since_last_release(&ctx.owner, &ctx.repo, &pkg_dir).await?;
