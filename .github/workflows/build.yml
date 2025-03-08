@@ -1,9 +1,7 @@
-name: Releaser
+name: Build & Test
 
 on:
   push:
-    branches:
-      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,13 +11,15 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
-
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
 
     - uses: mozilla-actions/sccache-action@v0.0.8
-   
+
     - name: Build
-      run: cargo run -- --repo-url tmayoff/releaser --token ${{ secrets.RELEASER_TOKEN }} pr
+      run: cargo build
+
+    - name: Test
+      run: cargo test
