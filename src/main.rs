@@ -1,6 +1,7 @@
 pub mod config;
 pub mod context;
 pub mod fs;
+pub mod package;
 pub mod pr;
 
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use clap::{Parser, Subcommand};
 use config::get_config;
 use log::info;
 use octocrab::models::repos::{CommitAuthor, RepoCommit};
+use package::get_package_name;
 use pr::find_pr;
 
 #[derive(Clone, Debug, Subcommand)]
@@ -72,44 +74,52 @@ async fn pr(ctx: &context::Context) -> Result<()> {
         .as_ref()
         .expect("PR command requires a Github token");
 
-    let commits = get_commits_since_last_release(&ctx.owner, &ctx.repo).await?;
+    for (pkg_dir, pkg) in &ctx.config.packages {
+        let package_name = get_package_name(ctx, pkg_dir, &pkg.release_type).await?;
 
-    let octocrab = octocrab::instance().user_access_token(token.as_str())?;
-    let head = octocrab
-        .commits(&ctx.owner, &ctx.repo)
-        .get("HEAD")
-        .await?
-        .sha;
+        info!("Updating PR for '{}' package", package_name);
 
-    let branch_name = "releaser-main-release";
+        let commits = get_commits_since_last_release(&ctx.owner, &ctx.repo, &pkg_dir).await?;
 
-    let changelog = conventional_commits_to_string(&commits);
-    if let None = find_pr(&ctx.owner, &ctx.repo, pr::PR_TITLE_PREFIX).await? {
-        info!("Existing release PR not found, creating now...");
+        let octocrab = octocrab::instance().user_access_token(token.as_str())?;
+        let head = octocrab
+            .commits(&ctx.owner, &ctx.repo)
+            .get("HEAD")
+            .await?
+            .sha;
 
-        let _ = octocrab
-            .repos(&ctx.owner, &ctx.repo)
-            .create_ref(
-                &octocrab::params::repos::Reference::Branch(branch_name.to_string()),
-                &head,
-            )
-            .await;
+        let branch_name = "releaser-main-release";
 
-        update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog).await?;
-    } else {
-        info!("Existing release PR found");
-        update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog).await?;
+        let changelog = conventional_commits_to_string(&commits);
+        if let None = find_pr(&ctx.owner, &ctx.repo, pr::PR_TITLE_PREFIX).await? {
+            info!("Existing release PR not found, creating now...");
+
+            let _ = octocrab
+                .repos(&ctx.owner, &ctx.repo)
+                .create_ref(
+                    &octocrab::params::repos::Reference::Branch(branch_name.to_string()),
+                    &head,
+                )
+                .await;
+
+            update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog)
+                .await?;
+        } else {
+            info!("Existing release PR found");
+            update_or_create_file(&octocrab, &ctx.owner, &ctx.repo, "CHANGELOG.md", &changelog)
+                .await?;
+        }
+
+        pr::update_or_create(
+            &octocrab,
+            &ctx.owner,
+            &ctx.repo,
+            &head,
+            pr::PR_TITLE_PREFIX,
+            &pr::format_body(&changelog),
+        )
+        .await?;
     }
-
-    pr::update_or_create(
-        &octocrab,
-        &ctx.owner,
-        &ctx.repo,
-        &head,
-        pr::PR_TITLE_PREFIX,
-        &pr::format_body(&changelog),
-    )
-    .await?;
 
     Ok(())
 }
@@ -169,13 +179,20 @@ async fn update_or_create_file(
 async fn check(ctx: &context::Context) -> Result<()> {
     info!("Checking repo: {}/{}", ctx.owner, ctx.repo);
 
-    let grouped = get_commits_since_last_release(&ctx.owner, &ctx.repo).await?;
+    for (pkg_dir, pkg) in &ctx.config.packages {
+        info!(
+            "Checking package: {}",
+            package::get_package_name(ctx, pkg_dir, &pkg.release_type).await?
+        );
 
-    info!("Commits since last release");
-    for (_type, commits) in grouped {
-        info!("{:?}", _type);
-        for commit in commits {
-            info!("\t{}", commit.title);
+        let grouped = get_commits_since_last_release(&ctx.owner, &ctx.repo, &pkg_dir).await?;
+
+        info!("Commits since last release");
+        for (_type, commits) in grouped {
+            info!("{:?}", _type);
+            for commit in commits {
+                info!("\t{}", commit.title);
+            }
         }
     }
     Ok(())
@@ -184,40 +201,33 @@ async fn check(ctx: &context::Context) -> Result<()> {
 async fn get_commits_since_last_release(
     owner: &str,
     repo: &str,
+    path: &str,
 ) -> Result<HashMap<ConventionalCommitType, Vec<ConventionalCommit>>> {
     let octocrab = octocrab::instance();
 
     let latest_release = octocrab.repos(owner, repo).releases().get_latest().await;
 
-    match latest_release {
+    let repos = octocrab.repos(owner, repo);
+    let builder = repos.list_commits();
+
+    let commits = match latest_release {
         Ok(release) => {
-            let commits = octocrab
-                .repos(owner, repo)
-                .list_commits()
+            builder
+                .path(path)
                 .since(release.published_at.unwrap())
                 .send()
-                .await?;
-
-            let commits = commits
-                .items
-                .iter()
-                .filter_map(|c| parse_commit(c))
-                .collect::<Vec<ConventionalCommit>>();
-
-            Ok(group_by_category(&commits))
+                .await?
         }
-        Err(_) => {
-            let commits = octocrab.repos(owner, repo).list_commits().send().await?;
+        Err(_) => builder.path(path).send().await?,
+    };
 
-            let commits = commits
-                .items
-                .iter()
-                .filter_map(|c| parse_commit(c))
-                .collect::<Vec<ConventionalCommit>>();
+    let commits = commits
+        .items
+        .iter()
+        .filter_map(|c| parse_commit(c))
+        .collect::<Vec<ConventionalCommit>>();
 
-            Ok(group_by_category(&commits))
-        }
-    }
+    Ok(group_by_category(&commits))
 }
 
 fn group_by_category(

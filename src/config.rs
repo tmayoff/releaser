@@ -14,12 +14,12 @@ pub enum ReleaseType {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Package {
-    release_type: ReleaseType,
+    pub release_type: ReleaseType,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    packages: HashMap<String, Package>,
+    pub packages: HashMap<String, Package>,
 }
 
 pub async fn get_config(owner: &str, repo: &str) -> Result<Config> {
